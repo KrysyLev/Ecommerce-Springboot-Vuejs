@@ -21,53 +21,74 @@ import java.util.List;
 @RestController
 @RequestMapping("/order")
 public class OrderController {
-    @Autowired
-    private OrderService orderService;
+
+    private final OrderService orderService;
+    private final AuthenticationService authenticationService;
 
     @Autowired
-    private AuthenticationService authenticationService;
+    public OrderController(OrderService orderService, AuthenticationService authenticationService) {
+        this.orderService = orderService;
+        this.authenticationService = authenticationService;
+    }
 
     @GetMapping("/")
-    public ResponseEntity<List<Order>> getAllOrders(@RequestParam("token") String token) throws AuthenticationFailException {
-        authenticationService.authenticate(token);
-        User user = authenticationService.getUser(token);
-
-        List<Order> orderDtoList = orderService.listOrders(user);
-
-        return new ResponseEntity<>(orderDtoList, HttpStatus.OK);
+    public ResponseEntity<List<Order>> getAllOrders(@RequestParam("token") String token) {
+        try {
+            authenticationService.authenticate(token);
+            User user = authenticationService.getUser(token);
+            List<Order> orderList = orderService.listOrders(user);
+            return ResponseEntity.ok(orderList);
+        } catch (AuthenticationFailException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
     }
 
     @PostMapping("/checkout-session")
-    public ResponseEntity<StripeResponse> checkoutList(@RequestBody List<CheckoutItemDto> checkoutItemDtoList) throws StripeException {
-        Session session = orderService.createSession(checkoutItemDtoList);
-        StripeResponse stripeResponse = new StripeResponse(session.getId());
-        return new ResponseEntity<>(stripeResponse, HttpStatus.OK);
+    public ResponseEntity<StripeResponse> createCheckoutSession(@RequestBody List<CheckoutItemDto> checkoutItemDtoList) {
+        try {
+            Session session = orderService.createSession(checkoutItemDtoList);
+            StripeResponse stripeResponse = new StripeResponse(session.getId());
+            return ResponseEntity.ok(stripeResponse);
+        } catch (StripeException e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(new StripeResponse("Stripe session creation failed: " + e.getMessage()));
+        }
     }
 
-
     @PostMapping("/add")
-    public ResponseEntity<ApiResponse> placeOrder(@RequestParam("token") String token, @RequestParam("sessionId") String sessionId)
-            throws AuthenticationFailException {
+    public ResponseEntity<ApiResponse> placeOrder(
+            @RequestParam("token") String token,
+            @RequestParam("sessionId") String sessionId) {
+        if (sessionId == null || sessionId.isEmpty()) {
+            return ResponseEntity.badRequest().body(new ApiResponse(false, "Session ID is missing."));
+        }
 
-        authenticationService.authenticate(token);
-        User user = authenticationService.getUser(token);
-
-        orderService.placeOrder(user, sessionId);
-        return new ResponseEntity<>(new ApiResponse(true, "Order has been placed"), HttpStatus.CREATED);
+        try {
+            authenticationService.authenticate(token);
+            User user = authenticationService.getUser(token);
+            orderService.placeOrder(user, sessionId);
+            return new ResponseEntity<>(new ApiResponse(true, "Order has been placed."), HttpStatus.CREATED);
+        } catch (AuthenticationFailException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(new ApiResponse(false, "Authentication failed: " + e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(new ApiResponse(false, "Failed to place order: " + e.getMessage()));
+        }
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<Object> getOrderById(@PathVariable("id") Integer id, @RequestParam("token") String token)
-            throws AuthenticationFailException {
-        // validate token
-        authenticationService.authenticate(token);
+    public ResponseEntity<Object> getOrderById(
+            @PathVariable("id") Integer id,
+            @RequestParam("token") String token) {
         try {
+            authenticationService.authenticate(token);
             Order order = orderService.getOrder(id);
-            return new ResponseEntity<>(order,HttpStatus.OK);
+            return ResponseEntity.ok(order);
+        } catch (AuthenticationFailException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Authentication failed: " + e.getMessage());
+        } catch (OrderNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
         }
-        catch (OrderNotFoundException e) {
-            return new ResponseEntity<>(e.getMessage(),HttpStatus.NOT_FOUND);
-        }
-
     }
 }

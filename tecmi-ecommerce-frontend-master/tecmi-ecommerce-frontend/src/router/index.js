@@ -142,7 +142,7 @@ const routes = [
   {
     path: '/payment/success',
     name: 'PaymentSuccess',
-    component:Success
+    component: Success
   },
   {
     path: '/payment/failed',
